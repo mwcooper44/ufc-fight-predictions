@@ -1,0 +1,672 @@
+---
+title: "Final Project - UFC"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    theme: journal
+    highlight: tango
+---
+
+```{r setup, include=FALSE, ,cache=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+library(caret)
+library(ggplot2)
+library(dplyr)
+library(neuralnet)
+library(class)
+library(kernlab)
+library(randomForest)
+library(C50)
+library(rpart)
+library(janitor)
+set.seed(19)
+```
+
+# Introduction
+
+## Understanding the Data
+
+**The Ultimate UFC Dataset** on Kaggle is a comprehensive collection of data related to the Ultimate Fighting Championship (UFC), a popular mixed martial arts (MMA) organization. The dataset contains information on UFC fights, fighters, and events dating back to the organization’s early years. It includes key details such as the fighters' names, the date and location of each fight, the result of the fight (win/loss), the methods of victory (e.g., knockout, submission, decision), and statistics like the fighters' reach, height, weight, and fight record (e.g., wins, losses, draws). Additionally, it features data on the fight’s round, time, and scoring, allowing for a deeper analysis of the dynamics of each match.
+
+<br>
+
+With over 6,000 fights and more than 2,000 fighters, this dataset offers rich opportunities for analysis. Analysts can use it to explore trends in fighter performance, the impact of various fight statistics on the outcome of a match, and the success rate of fighters over time. It also provides insights into how different factors, such as weight class or fighting style, might influence a fighter’s chances of winning. This dataset is especially useful for those interested in sports analytics, as it offers an extensive record of UFC events and can be used for predictive modeling, classification tasks, and performance evaluation.
+<br>
+
+Our group became interested in this UFC dataset due to our shared enthusiasm for MMA. Several of us are fight fans who regularly watch matches, and even enjoy friendly betting during big events. This dataset aligns perfectly with our passion, offering an opportunity to explore fight statistics and trends in a more analytical and structured way, like we have been learning in class. It also allows us to back our discussions and predictions with real data, enhancing the overall experience of watching and debating the fights.
+
+<br>
+
+## Business Problem
+
+### Three Business Prompts:
+
+**There are three possible points of view to take into consideration when looking for answering a business question with this dataset.**<br>
+
+**Betting Optimization:** Leveraging a predictive model on this dataset could enable significant optimization of betting strategies. By accurately forecasting fight outcomes, betting platforms or individual bettors could use this data-driven approach to place strategic bets on upcoming events, aiming to maximize potential returns. This approach minimizes the guesswork by creating a calculated, evidence-based betting strategy, where bettors can capitalize on predicted fight results. In the context of betting platforms, such a model could also be used to refine odds setting, balancing profitability and attractiveness to users.
+<br>
+
+**UFC Organization:** The UFC organization itself stands to benefit greatly from the predictive power of this dataset. With an advanced model predicting fight outcomes, the UFC can curate matchups that heighten fan engagement, promoting bouts with potential narratives that resonate with audiences. Marketing strategies can also be sharpened, with promotional efforts targeted around the anticipated excitement and dynamics of each fight, ultimately enhancing viewer experience and ticket sales. Beyond event marketing, predictive insights could guide fighter investments, where the UFC strategically allocates resources to fighters with high potential for growth and fan appeal. Furthermore, the UFC’s talent scouting and matchmaking can be optimized, identifying promising fighters early on and pairing them in match ups likely to captivate audiences.
+<br>
+
+**Sponsorship and Advertising Optimization:** Predictive insights from this dataset could also revolutionize sponsorship and advertising strategies in the UFC and the wider MMA ecosystem. Brands often sponsor fighters or events to connect with their target audience, but choosing the right fighter or event can be challenging. A predictive model could help advertisers identify fighters or matchups likely to generate the highest engagement based on historical trends, fighter popularity, and expected outcomes. This ensures a better return on investment (ROI) for sponsors and creates more lucrative partnership opportunities for the UFC. Additionally, advertisers could tailor their campaigns around fights expected to attract the largest audiences, further maximizing reach and impact.
+<br>
+
+Since the first business question aligns more with our current situation, and feels more relevant, we have decided to focus our model for betting optimization. This could prove to have significant impact on our betting performance, and we ar excited to test if "the house always wins" will still apply!
+<br>
+### Important Considerations
+
+**The following are some considerations to be taken now that we have defined our business question:**
+
+  - We do not care about the accuracy of our model; instead we are focusing on precision (whenever we say a fighter is going to win, he/she actually wins) as we want to make sure every time we bet, we are making money
+
+  - Since we are focusing on maximizing precision, it is likely that we don't bet on all fights. We will modify the threshold/cost matrix in order to make this maximization, which will likely result in lowering recall.
+  
+  - We can calculate an expected value for each bet, and aim to optimize the fights we bet in
+
+### Goals and Objectives
+
+**Therefore, we have the following objectives:**
+
+ - Achieve at least an 80% precision score.
+ 
+ - Achieve at least a 25% recall score (meaning we would only bet on 1/4 of the possible wins).
+ 
+ - Develop an expected maximization equation to optimize our betting strategies against the house odds.
+
+<br>
+
+## Mathematical Estimations
+
+### Expected Value formula
+
+In order to compute our expected value, and use it to gain an advantage against the house we will use the following formula:
+
+$$
+\text{Expected Value} = \text{Precision} \times \text{Cash Flow from winning bet} + (1 - \text{Precision}) \times \text{Cash Flow from losing bet}
+$$
+
+The formula for precision is:
+
+$$
+\text{Precision} = \frac{TP}{TP + FP} 
+$$
+
+The cash flow from winning a bet will be the odds that the most advantageous casino is offering. It is normally expressed as -xxx dollars for the favorite, and +xxx dollars for the underdog. A +305 dollars odd means that for every 100 dollars you bet, you will win 305 dollars in profit if the bet is successful. On the other hand, a -230 dollars odd means that you need to bet 230 dollars to win 100 dollars in profit if the bet is successful. If you lose, you will lose your initial bet.
+<br>
+### Workflow every fight event
+
+**The workflow for every fight card will be:**
+
+  - Gather updated fighter information
+  
+  - Run the model on the fight card for red winner
+  
+  - Run the model on the fight card for blue winner
+  
+  - Analyze if model predicts a win
+  
+  - Check if the two predictions agree with each other
+  
+  - If they do, compute expected value from every bet
+  
+  - Bet disposable income on highest expected value (or couple bets)
+  
+*Note: disposable income refers to money you are comfortable losing, betting responsibly is advised.*
+
+<br>
+
+# Pre-Processing
+
+The next step on this report will be processing - where we will clean the data and prepare it for modeling.
+
+## Loading the Data
+
+```{r cache = TRUE, results='hide'}
+ufc <- read.csv("ufc-master.csv", stringsAsFactors = TRUE)
+ufc_raw <- read.csv("ufc-master.csv", stringsAsFactors = TRUE)
+
+predict <- read.csv("predict.csv")
+predict <- clean_names(predict)
+```
+
+<br>
+
+## Cleaning Data
+
+**We need to make the following changes:**
+
+  - We can remove location, date, country, gender, since they don't affect what we are doing and are non-significant
+  
+  - Remove odds columns as these columns already use similar models and information for their computation
+  
+  - We also need to handle the NA values, since due to the ranking system, there are many NA values for each fighter.
+  
+  - We need to set the target variable binary
+  
+  - We also need to factorize and encode categorical variables
+  
+  - **For all the statistics that we have for both fighters, we should compute the difference between them so that this variable becomes predictive (note that this is already done for the majority of columns, so we only need to remove the original columns)**
+  
+  - We should also scale the our numerical variables
+  
+  - Splitting into test and training our dataset with a 0.5 percent factor. We have chosen this factor because we are using a stacked model and need to ensure enough data points are passeed into the second training set.
+
+<br>
+
+### Removing Unuseful Columns
+```{r,cache=TRUE}
+ufc$Gender <- NULL
+ufc$Location <- NULL
+ufc$Date <- NULL
+ufc$Country <- NULL
+ufc$RedFighter <- NULL
+ufc$BlueFighter <- NULL
+ufc$BlueStanceSwitch. <- NULL
+ufc$BlueStanceOpen.Stance <- NULL
+RedDecOdds <- NULL
+BlueDecOdds  <- NULL
+RSubOdds <- NULL
+BSubOdds <- NULL
+RKOOdds  <- NULL
+BKOOdds  <- NULL
+```
+
+<br>
+
+### Pre-Processing
+```{r,cache=TRUE}
+start_col <- which(names(ufc) == "EmptyArena")
+end_col <- which(names(ufc) == "TotalFightTimeSecs")
+ufc <- ufc[,-c(start_col:end_col)]
+```
+
+<br>
+
+### Setting Binary Target Variable
+
+```{r,cache=TRUE}
+ufc$Winner <- ifelse(ufc$Winner == "Red", 1, 0)
+```
+
+<br>
+
+### Computing Differential of Columns
+
+In this section we compute the differential of all relevant columns, and remove their correspondents
+```{r,cache=TRUE}
+ufc$RedExpectedValue <- NULL
+ufc$BlueExpectedValue <- NULL
+
+ufc$BlueCurrentLoseStreak <- NULL
+ufc$BlueCurrentWinStreak <- NULL
+ufc$BlueDraws <- NULL
+ufc$RedCurrentLoseStreak <- NULL
+ufc$RedCurrentWinStreak <- NULL
+ufc$RedDraws <- NULL
+
+ufc$BlueAvgSigStrLanded <- NULL
+ufc$RedAvgSigStrLanded <- NULL
+
+ufc$AvgSigStrPct_dif <- ufc$BlueAvgSigStrPct - ufc$RedAvgSigStrPct
+ufc$BlueAvgSigStrPct <- NULL
+ufc$RedAvgSigStrPct <- NULL
+
+ufc$BlueAvgSubAtt <- NULL
+ufc$RedAvgSubAtt <- NULL
+
+ufc$BlueAvgTDLanded <- NULL
+ufc$RedAvgTDLanded <- NULL
+
+ufc$BlueAvgTDPct <- NULL
+ufc$RedAvgTDPct <- NULL
+
+ufc$BlueLongestWinStreak <- NULL
+ufc$RedLongestWinStreak <- NULL
+
+ufc$BlueLosses <- NULL
+ufc$RedLosses <- NULL
+
+ufc$BlueTotalRoundsFought <- NULL
+ufc$RedTotalRoundsFought <- NULL
+
+ufc$BlueTotalTitleBouts <- NULL
+ufc$RedTotalTitleBouts <- NULL
+
+ufc$BlueWinsByDecisionMajority <- NULL
+ufc$RedWinsByDecisionMajority <- NULL
+
+ufc$BlueWinsByDecisionSplit     <- NULL
+ufc$BlueWinsByDecisionUnanimous <- NULL
+ufc$BlueWinsByKO                <- NULL
+ufc$BlueWinsBySubmission        <- NULL
+ufc$BlueWinsByTKODoctorStoppage <- NULL
+ufc$BlueWins <- NULL
+ufc$RedWinsByDecisionSplit     <- NULL
+ufc$RedWinsByDecisionUnanimous <- NULL
+ufc$RedWinsByKO                <- NULL
+ufc$RedWinsBySubmission        <- NULL
+ufc$RedWinsByTKODoctorStoppage <- NULL
+ufc$RedWins <- NULL
+
+ufc$stance_dif <- ifelse(as.character(ufc$BlueStance) == as.character(ufc$RedStance), 1, 0)
+ufc$BlueStance <- NULL
+ufc$RedStance <- NULL
+
+ufc$BlueHeightCms <- NULL
+ufc$BlueReachCms <- NULL
+ufc$BlueWeightLbs <- NULL
+ufc$RedHeightCms <- NULL
+ufc$RedReachCms <- NULL
+ufc$RedWeightLbs <- NULL
+
+ufc$BlueAge <- NULL
+ufc$RedAge <- NULL
+
+ufc$RedDecOdds <- NULL
+ufc$BlueDecOdds <- NULL
+ufc$RSubOdds   <- NULL
+ufc$BSubOdds   <- NULL
+ufc$RKOOdds    <- NULL
+ufc$BKOOdds  <- NULL
+
+ufc <- ufc %>% select(-Winner, Winner)
+```
+
+<br>
+
+### Encoding
+
+We have decided to use a one-ht-encoding approach to encode the categorical variables
+
+```{r,cache=TRUE}
+ufc$WeightClass <- as.factor(ufc$WeightClass)
+ufc$TitleBout <- as.factor(ufc$TitleBout)
+
+categorical_cols <- c("WeightClass", "TitleBout")
+dummies <- as.data.frame(model.matrix(~.-1, data = ufc[, categorical_cols]))
+ufc <- cbind(ufc, dummies)
+ufc$WeightClass <- NULL
+ufc$BlueStance <- NULL
+ufc$RedStance <- NULL
+ufc$TitleBout <- NULL
+```
+
+<br>
+
+### Removing NAs
+
+```{r,cache=TRUE}
+ufc <- na.omit(ufc)
+```
+
+<br>
+
+### Scaling
+
+```{r,cache=TRUE}
+cols_to_scale <- c("NumberOfRounds", "LoseStreakDif", "LongestWinStreakDif", "WinDif", "LossDif", "TotalRoundDif", "TotalTitleBoutDif", "KODif", "SubDif", "HeightDif", "ReachDif", "AgeDif", "SigStrDif", "AvgSubAttDif", "AvgTDDif", "AvgSigStrPct_dif", "BlueOdds", "RedOdds", "WinStreakDif")
+
+cols_to_scale2 <- c("red_odds", "blue_odds","number_of_rounds","lose_streak_dif","win_streak_dif","longest_win_streak_dif","win_dif","loss_dif","total_round_dif", "total_title_bout_dif", "ko_dif","sub_dif","height_dif","reach_dif","age_dif","sig_str_dif","avg_sub_att_dif","avg_td_dif","avg_sig_str_pct_dif", "stance_dif")
+
+minmax <- function(x){
+  (x - min(x))/(max(x) - min(x))
+}
+
+ufc[cols_to_scale] <- as.data.frame(lapply(ufc[cols_to_scale], minmax))
+predict[cols_to_scale2] <- as.data.frame(lapply(predict[cols_to_scale2], minmax))
+```
+
+Here we make sure that the "Winner" Column is at the right end of the DataFrame so that our models won't use it in their training.
+
+```{r}
+ufc <- ufc %>% select(-Winner, Winner)
+```
+
+<br>
+
+### Spliting the Data
+
+We split the data into a 50-50 split of train and test, as well as utilize the janitor package to clean the names of the columns so that they are able to work with all of our different models.
+
+```{r, cache = TRUE}
+test_rows <- sample(1:nrow(ufc), nrow(ufc)*0.5)
+test <- ufc[test_rows, ]
+train <- ufc[-test_rows, ]
+train <- clean_names(train)
+test <- clean_names(test)
+```
+
+# First Level Models
+
+**In this section we will use the models and techniques explored in class in order to create the first level models for the stack.**
+
+<br>
+
+## Logistic Regression
+
+Our base model will be the **logistic regression**. We are also going to run a backward step function that removes additional factors that do not affect the outcome of the prediction. This is done to reduce overfitting to our training dataset so that it can more accurately predict additional testing data.
+<br>
+
+```{r, cache=TRUE, results='hide'}
+m1 <- glm(winner ~ ., data = train, family= "binomial")
+
+#backward step model
+m1 <- step(m1, direction = "backward")
+```
+
+Once we have run our backward step model, we are going to have to "bin" or binarize our predictions. The result of the logistic regression is a bunch of predictions between 0 and 1, so we are going to guess that predictions less than .5 are going to be 0, or "No", and predictions greater than or equal to .5 are going to be 1, or "Yes". We will use the actual results for the stack model.
+
+Finally we will use a confusion Matrix to evaluate our results.
+<br>
+
+```{r}
+m1_pred_test <- predict(m1, test, type="response")
+bin_m1_pred_test <- ifelse(m1_pred_test < 0.5, 0, 1)
+confusionMatrix(as.factor(bin_m1_pred_test),as.factor(test$winner), positive = "1")
+```
+
+From our confusion matrix, we can see that we have an accuracy of 66.19%, a kappa of 0.2897, and a precision of 0.6882, this model is almost to our 80% precision threshold, but not quite. Although we might use aspects of it to boost the combined model's kappa and precision values, since those values for the logistic regression are pretty high.
+<br>
+
+# KNN
+
+Next, we will explore the **KNN**. Our KNN model build and predicts in one step. With the KNN model we will have to set the number of "clusters" we want to split our data into. Below, I am going to run a set of tests in order to find an optimal k value that balances the model between overfitting and underfitting our train/test data in otherwords getting the best kappa value. 
+<br>
+
+```{r, cache=TRUE}
+# Loop
+for (i in seq(5, 100, by = 3)) {
+
+  # KNN
+  knn_pred <- knn(train = train[,-ncol(train)], test = test[,-ncol(test)], cl = train$winner, k = i)
+  
+  # Recall
+  cf <- confusionMatrix(as.factor(knn_pred),as.factor(test$winner), positive = "1")
+  sensitivity <- cf$overall["Kappa"]
+  print(paste("Kappa for k = ", i, ":", sensitivity))
+}
+```
+
+As it can be seen, this model is highly efficient for this data. We will pick a **k of 50** to avoid overfitting. It also follows the general accepted rule of sqrt(n). This proves that this method worked particularly well.
+
+```{r, cache=TRUE}
+m2_pred_test <- knn(train = train[,-ncol(train)], test = test[,-ncol(test)], cl = train$winner, k = 50)
+confusionMatrix(as.factor(m2_pred_test), as.factor(test$winner), positive = "1")
+```
+
+From our analysis we got similar results to logistic regression, with an accuracy of 59.74%, a Kappa of 0.1175, and a precision of .6166. These values aren't much better but we could still use aspects of the KNN model in our final overall stacked model.
+<br>
+
+## ANN
+
+Next, we will try the **neural network models**. We will run it with 3 hidden nodes to try to boost Kappa and Accuracy, in other words we will boost the number of neurons that the model can make so it can be a better representation of our data. 
+
+```{r, cache=TRUE, results='hide'}
+m3 <- neuralnet(winner ~ ., data=train, hidden=c(2,1), stepmax=1e6, lifesign="full")
+```
+
+We will also have to binarize the results of the ANN output because the values are between 0 and 1, so for these we will binarize them when the prediction is > 0.5, return 1, less than or equal to .5, return 0. Then we will analyze our results using a confusionMatrix as well.
+
+```{r, cache=TRUE}
+m3_pred_test <- predict(m3, newdata=test)
+bin_m3_pred_test <- ifelse(m3_pred_test > 0.5, 1, 0)
+confusionMatrix(as.factor(bin_m3_pred_test), as.factor(test$winner), positive = "1")
+```
+
+As we can see from our results, we have significantly improved the precision of our results from this model. With an accuracy of 61.38%, a Kappa of 0.2514, and a precision of .7426. This improved precision is what we are looking for out of our models in order to answer our business question accurately.
+<br>
+
+## Support Vector Machine
+
+Now, we will use the SVM machines and we will try three different kernels to view which one has the best results. We also must binarize the results of all of the SVM machines because they give us results between 0 and 1 rather than straight binary 0 and 1 values.
+
+### Testing Different Kernels
+
+```{r}
+m4_1 <- ksvm(winner ~ ., data = train, kernel = "vanilladot")
+m4_1_pred_test <- predict(m4_1, test)
+bin_pred_m4_1 <- if_else(m4_1_pred_test < 0.5, 0,1)
+confusionMatrix(as.factor(bin_pred_m4_1), as.factor(test$winner), positive = "1")
+```
+
+```{r}
+m4_2 <- ksvm(winner ~ ., data = train, kernel = "rbfdot")
+m4_2_pred_test <- predict(m4_2, test)
+bin_pred_m4_2 <- if_else(m4_2_pred_test < 0.5, 0,1)
+confusionMatrix(as.factor(bin_pred_m4_2), as.factor(test$winner), positive = "1")
+```
+
+```{r}
+m4_3 <- ksvm(winner ~ ., data = train, kernel = "polydot")
+m4_3_pred_test <- predict(m4_3, test)
+bin_pred_m4_3 <- if_else(m4_3_pred_test < 0.5, 0,1)
+confusionMatrix(as.factor(bin_pred_m4_3), as.factor(test$winner), positive = "1")
+```
+
+By analyzing all of the results here we can find that Vanilla dot kernel has the best kappa value and we will use that below.
+<br>
+
+### Final SVM Model
+
+We will select *vanilladot* as our kernel since it is the one with the highest kappa.
+
+```{r,cache=TRUE}
+m4 <- ksvm(winner ~ ., data = train, kernel = "vanilladot")
+m4_pred_test <- predict(m4, test)
+bin_pred_m4 <- if_else(m4_pred_test < 0.5, 0,1)
+```
+
+Above, we set our final m4 prediction to be the vanilla dot model.
+
+<br>
+
+## Random Forest
+
+Here we will create a Random Forest model to build an ensemble of decision trees, each trained on random subsets of data and features. It will then return us the best possible model or decision tree from this set. We also need to binarize the outputs since it returns values between 0 and 1.
+
+```{r,cache=TRUE}
+m5 <- randomForest(winner ~ . , data = train)
+m5_pred_test <- predict(m5, test)
+pred_m5_bin <- ifelse(m5_pred_test < 0.5, 0,1)
+confusionMatrix(as.factor(pred_m5_bin), as.factor(test$winner), positive = "1")
+```
+
+As we can see, our results from this model are also going to be useful. An accuracy of 64.78%, kappa of 0.2631, and precision of 0.6808. Some of the models features will definitely be utilized when creating our final stacked models.
+<br>
+
+# Stack Model
+
+**We will create two different stack models.** The first model will be responsible for better reds, and the second one for blue. We will combine these models as explained in the introduction to make our bets.
+
+## Combining the Data
+
+We will proceed with combining the data into one data frame. Where each column is one of our models, and the last column is the outputs of the winner column for each of those tests.
+
+```{r}
+combined_df <- data.frame(m1_pred_test, m2_pred_test, m3_pred_test, m4_pred_test, m5_pred_test, test$winner)
+```
+
+<br>
+
+## Stack Decision Tree Model
+
+Here we split the data for the combined dataFrame into test and train with 70% being train, and 30% being test rows.
+```{r}
+test_rows <- sample(1:nrow(combined_df), nrow(combined_df)*0.3)
+snd_level_test <- combined_df[test_rows, ]
+snd_level_train <- combined_df[-test_rows, ]
+```
+
+<br>
+
+We will use a cost matrix to optimize precision, because we don't care too much about getting all the winners, we just want to make sure that whenever we bet, we are correct. We lose all the money when we miss, but we only get a fraction when we win. Therefore, we should **aim at reducing the false positives**. That is what we aimed with this cost matrix!
+
+<br>
+
+```{r}
+cost_matrix <- matrix(c(0, 1,   # Cost of predicting "No" when the true class is "Yes"
+                        3, 0),  # Cost of predicting "Yes" when the true class is "No"
+                      nrow = 2, 
+                      byrow = TRUE)
+
+rownames(cost_matrix) <- colnames(cost_matrix) <- c("0", "1")
+```
+
+```{r, cache=TRUE}
+# Build the decision tree model with the cost matrix
+m6 <- C5.0(as.factor(test.winner) ~ ., data = snd_level_train, costs = cost_matrix)
+pred_m6 <- predict(m6, newdata = snd_level_test)
+confusionMatrix(as.factor(pred_m6), as.factor(snd_level_test$test.winner), positive = "1")
+```
+
+```{r, cache=TRUE, include=FALSE}
+# Build the decision tree model with the cost matrix
+m6_blue <- C5.0(as.factor(test.winner) ~ ., data = snd_level_train, costs = cost_matrix)
+```
+
+```{r}
+plot(m6)
+```
+
+<br>
+
+# Conclusion
+
+## Model Performance
+
+Our model meets our expectations with regards to the goals set in the introduction. We have achieved about a **80.3% precision**, and **beat on approximately 1/4 of all winnings available**. The model is running efficiently, and can be ran in production.
+
+Whenever we want to use this model, we will ran it twice, one for blue and one for red like mentioned in the introduction.
+<br>
+
+## Optimizing our Winnings in Real Life
+
+In order to maximize our returns, and reduce risk we will use the workflow explained in the introduction. We will only bet if the model for red and model for blue agree with each other. We will then calculate expected value and bet on those who are deemed to have acceptable values.
+<br>
+Since we wanted to test our model in the real world to test our workflow and business outcome, we have used UFC 309 and UFC 310. 
+
+We gathered all necessary statistics and values for both nights fights and created a dataset called predict. You may have noticed it throughout the report. Now we will need to used our trained first level models to predict for new data and create a new combined dataset.
+<br>
+
+```{r}
+new_pred_1 <- predict(m1, predict, type="response")
+new_pred_2 <- knn(train = train[,-ncol(train)], test = predict[,-ncol(predict)], cl = train$winner, k = 50)
+new_pred_3 <- predict(m3, newdata=predict)
+new_pred_4 <- predict(m4, predict)
+new_pred_5 <- predict(m5, predict)
+
+new_combined_df <- data.frame(new_pred_1, new_pred_2, new_pred_3, new_pred_4, new_pred_5, predict$winner)
+
+colnames(new_combined_df) <- c("m1_pred_test", "m2_pred_test", "m3_pred_test", "m4_pred_test", "m5_pred_test", "test.winner")
+```
+
+**Prediction for Red**
+```{r}
+final_pred_red <- predict(m6, newdata = new_combined_df)
+final_pred_red
+```
+
+Results: 1 1 1 0 1 0 1 0 1 0
+
+**Prediction for Blue**
+```{r}
+final_pred_blue <- predict(m6_blue, newdata = new_combined_df)
+```
+
+Results: 0 0 0 0 0 0 0 1 0 1
+
+<br>
+
+The first five results correspond to UFC 310, while the last 5 correspond to UFC 309.
+
+**The results are amazing**, with a payoff 250 dollars in profit for every 200 dollars bet (meaning the house would give us 450 dollars). This is an **return of 125%**. Below we explain all our thought process in deciding where to bet and the EV calculations.
+
+### Last Week's Math
+
+![UFC 309 Table](ufc309.png)
+
+This is the explanation of the table above:
+
+  - The first column here represents the names of the fighters.
+
+  - The next two columns show our model's predictions for red and blue (First name in the Match up is Red Fighter, Second is Blue Fighter)
+  
+  - The following two columns show the casino odds (like explained in the introduction)
+  
+  - The next two columns show how much profit you make if you bet 100 dollars
+  
+  - Then come the decision making columns. The EV is the result from the expected value computation described above
+  
+  - The predicted winner represents what our models have agreed. If they didn't, it displays not predicted
+  
+  - The next column represents if we correctly predicted the winner
+  
+  - The second to last column represents our decision in regards to betting or not.
+  
+  - **Decision for betting or not betting:** the first thing we look for is seeing if the models agree with other. If they do, we are able to proceed, but if they don't we prefer to avoid this risk. Using the data gathered from the casino odds, we calculate profit in order to calculate the expected profits from placing a bet. Now it is all a decision for personal risk preferences. Negative expected results should never be bet upon. From the positives, we should pick obviously the one that has the highest return. This could also be subjected to higher risk, since the highest EV's will correspond to the underdogs. However, this should already be account for in the EV calculation. In this case, we have picked 10 dollars of expected value as a threshold and decided to bet on both.
+<br>
+In this case, we are bettingon the two fights with the highest expected value results. Then we have the results of the Actual Winner from last week in the very end column. We correctly predicted 2/2 of the fights we were going to bet on. And of the columns we even predicted for there to be a winner, we went 4/4. The last fight, neither of the models had a predicted outcome, so we would not have bet on them or expected a certain result. Last week's bets proved that our model while taking a conservative approach towards risk allows for wealth building. It also allows to take into account the risk-reward characteristics of the buyer.
+<br>
+**We would have won 250 dollars in profit for every 200 dollars bet.** (we bet 200 dollars and end up with 450 dollars for a total of 250 dollars profit).
+<br>
+With this being said, we suggest the following strategy to increase individual's net worth:
+
+  - Start betting low amounts on highest expected value results
+  
+  - Once profits start accumulating, begin lowering threshold of expected value and increasing bet size
+  
+  - If bet prediction agrees with casino favorite prediction, increase bet amount (in order to increase expected value)
+  
+  - Avoid betting on EV's below 10 dollars, as it can be regarded as unnecessary risk
+  
+  - Aim to bet in one fourth of available winnings (this does not mean available fights, it means 1/4th of predicted agreed wins by models)
+
+<br>
+
+### Next Week's Fight
+
+Let's look to see our predictions for Saturday's fights. 
+
+![UFC 310 Table](ufc310.png)
+
+Following the same thought process you would get:
+
+  - One bet that the models do not agree with each other
+  
+  - Predicted one underdog to win (which has an 217 EV)
+  
+  - Four favorite to win
+  
+  - We will only bet on third of them because the fourth one has a EV that is negative if we were to take this bet, it is not worth it.
+
+The results of these 5 fights will be found out this Saturday 12/7, but for now these are our predictions.
+
+<br>
+
+### Future Improvements
+
+As time goes on, this process could be efficient and improved. Our group has suggested the following ideas:
+  
+  - Improve the model as more data comes along, and look into purchasing more data with the profits
+  
+  - Create a bot to automate this model, expected value calculations, and data gathering
+  
+  - Explore different casino offers and promotions to optimize odds
+  
+  - Optimize model for parlay bets (these are when you combine bets and the odds get multiplied; if all are true you get improved odds, but if you miss even one you lose your money).
+
+<br>
+
+## Final Thoughts
+
+This project aimed to analyze fight statistics and outcomes in UFC to uncover patterns and insights that could aid in understanding fight dynamics and predicting outcomes. By leveraging statistical and machine learning techniques, we explored various variables that influence fight results, such as win streaks, physical differences, and significant strikes.
+<br>
+
+Our analysis framework provides a comprehensive way to assess fighters' performance and their chances of victory, potentially offering practical applications for sports analysts, bettors, and enthusiasts. While our initial results show promise, we anticipate that refining the model further—perhaps incorporating advanced feature engineering or additional contextual data—could enhance prediction accuracy and deepen insights.
+<br>
+
+Ultimately, this approach is not just about prediction but about gaining a deeper understanding of the factors that make fighters successful. We hope this project serves as a foundation for further research and inspires new ways to approach data-driven analysis in the world of combat sports.
+
+<br><br>
